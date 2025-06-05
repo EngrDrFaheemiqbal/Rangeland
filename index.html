@@ -1,0 +1,203 @@
+<!DOCTYPE html> 
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>AACo Remote Sensing Dashboard</title>
+  <style>
+    html, body {
+      margin: 0;
+      padding: 0;
+      height: 100%;
+      overflow: hidden;
+      font-family: Arial, sans-serif;
+    }
+
+    /* Loading Screen */
+    #loadingScreen {
+      position: fixed;
+      top: 0; left: 0; right: 0; bottom: 0;
+      background-color: #1D355B;
+      color: #D99F40;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      align-items: center;
+      z-index: 9999;
+    }
+
+    #loadingScreen img {
+      width: 200px;
+      height: auto;
+      margin-bottom: 20px;
+    }
+
+    #loadingScreen p {
+      font-size: 24px;
+      font-weight: bold;
+      margin-bottom: 20px;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .spinner {
+      border: 4px solid rgba(217, 159, 64, 0.3);
+      border-top: 4px solid #D99F40;
+      border-radius: 50%;
+      width: 24px;
+      height: 24px;
+      animation: spin 1s linear infinite;
+    }
+
+    @keyframes spin {
+      0% { transform: rotate(0deg);}
+      100% { transform: rotate(360deg);}
+    }
+
+    /* Header */
+    #header {
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 7%;
+      background-color: #1D355B;
+      display: flex;
+      align-items: center;
+      padding: 0 20px;
+      box-sizing: border-box;
+      z-index: 10;
+      justify-content: space-between;
+    }
+
+    #headerLeft {
+      display: flex;
+      align-items: center;
+    }
+
+    #headerLeft img {
+      height: 36px;
+      margin-right: 12px;
+    }
+
+    #headerTitle {
+      font-size: 20px;
+      font-weight: bold;
+      color: #D99F40;
+    }
+
+    /* Tabs */
+    #headerTabs {
+      display: flex;
+      height: 100%;
+    }
+
+    .tab {
+      padding: 14px 20px;
+      color: #D99F40;
+      cursor: pointer;
+      border-left: 1px solid #D99F40;
+      user-select: none;
+      font-weight: bold;
+      display: flex;
+      align-items: center;
+    }
+
+    .tab:hover {
+      background-color: #D99F40;
+      color: #1D355B;
+    }
+
+    /* App Content */
+    #appContent {
+      position: absolute;
+      top: 7%;
+      left: 0;
+      width: 100%;
+      height: 93%;
+    }
+
+    iframe {
+      width: 100%;
+      height: 107%;
+      border: none;
+      transform: translateY(-7%);
+    }
+  </style>
+</head>
+<body>
+
+<!-- Loading screen -->
+<div id="loadingScreen">
+  <img src="https://www.beefcentral.com/wp-content/uploads/2018/02/AACo_Logo-gold-feb18.png" alt="AACo Logo" />
+  <p>
+    Rangeland Intelligence Platform Loading.....
+    <span class="spinner"></span>
+  </p>
+</div>
+
+<!-- Fixed Header -->
+<div id="header" style="display:none;">
+  <div id="headerLeft">
+    <img src="https://www.beefcentral.com/wp-content/uploads/2018/02/AACo_Logo-gold-feb18.png" alt="AACo Logo" />
+    <div id="headerTitle">AACo Remote Sensing Dashboard</div>
+  </div>
+  <div id="headerTabs">
+    <div class="tab" onclick="loadTab('rangeland')">Rangeland</div>
+    <div class="tab" onclick="loadTab('soil')">Soil</div>
+    <div class="tab" onclick="loadTab('vegetation')">Grazing Planner</div>
+    <div class="tab" onclick="loadTab('climate')">Climate Scenarios</div>
+  </div>
+</div>
+
+<!-- Iframe container -->
+<div id="appContent" style="display:none;">
+  <iframe id="viewerFrame" src=""></iframe>
+</div>
+
+<script>
+  const links = {
+    rangeland: "https://et-aaco.users.earthengine.app/view/rangeland",
+    soil: "https://et-aaco.users.earthengine.app/view/soil-properties-app",
+    vegetation: "https://et-aaco.users.earthengine.app/view/grazing-planner",
+    climate: "https://et-aaco.users.earthengine.app/view/climate-scenarios"
+  };
+
+  function loadTab(tabName) {
+    const iframe = document.getElementById("viewerFrame");
+    iframe.src = links[tabName];
+    localStorage.setItem("lastTab", tabName);
+  }
+
+  window.onload = function () {
+    setTimeout(() => {
+      document.getElementById("loadingScreen").style.display = "none";
+      document.getElementById("header").style.display = "flex";
+      document.getElementById("appContent").style.display = "block";
+
+      const lastTab = localStorage.getItem("lastTab") || "rangeland";
+      loadTab(lastTab);
+    }, 3000);
+  };
+</script>
+<!-- Footer -->
+<footer style="
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  width: 100%;
+  height: 50px;
+  background-color: rgba(29, 53, 91, 1);
+  color: #D99F40;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: bold;
+  font-size: 14px;
+  z-index: 20;  /* Higher than iframe */
+  pointer-events: auto;
+">
+  © 2025 AACo. All rights reserved.
+</footer>
+</body>
+</html>
