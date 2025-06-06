@@ -1,0 +1,22 @@
+var canopyHeight = ee.ImageCollection('projects/meta-forest-monitoring-okw37/assets/CanopyHeight').mosaic();
+var treenotree = canopyHeight.updateMask(canopyHeight.gte(1))
+
+// Clip the CanopyHeight image to the extent of the geometry
+var clippedCanopyHeight = canopyHeight.clip(geometry);
+
+// Optionally, visualize the clipped image
+Map.centerObject(geometry, 10); // Adjust the zoom level as needed
+Map.addLayer(clippedCanopyHeight, {min: 0, max: 30, palette: ['white', 'green']}, 'Clipped Canopy Height');
+
+// Print the extent of the clipped image (for debugging or further analysis)
+var extent = clippedCanopyHeight.geometry().bounds();
+print('Extent of the clipped image:', extent);
+
+// Export the clipped image if needed
+Export.image.toDrive({
+  image: clippedCanopyHeight,
+  description: 'Clipped_CanopyHeight',
+  scale: 30, // Adjust the scale as needed
+  region: geometry,
+  maxPixels: 1e9
+});
