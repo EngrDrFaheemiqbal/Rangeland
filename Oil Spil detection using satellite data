@@ -1,0 +1,102 @@
+// Load the EVA_down_paddock geometry
+var geometry = ee.FeatureCollection("projects/ee-geosaptialaaco/assets/EVA_down_paddock").geometry();
+
+// Define the time ranges for both periods
+var startPeriod1 = ee.Date('2023-05-01');
+var endPeriod1 = ee.Date('2023-08-31');
+var startPeriod2 = ee.Date('2024-05-01');
+var endPeriod2 = ee.Date('2024-08-31');
+
+// Load Sentinel-1 ImageCollection and filter by date, polarization, and mode
+var sentinel1 = ee.ImageCollection('COPERNICUS/S1_GRD')
+  .filterBounds(geometry)
+  .filter(ee.Filter.eq('instrumentMode', 'IW'))
+  .filter(ee.Filter.listContains('transmitterReceiverPolarisation', 'VV'))
+  .filter(ee.Filter.listContains('transmitterReceiverPolarisation', 'VH'))
+  .filter(ee.Filter.eq('orbitProperties_pass', 'DESCENDING'));
+
+// Function to check if images are available for a given period
+var checkAvailability = function(startDate, endDate) {
+  var filtered = sentinel1
+    .filterDate(startDate, endDate);
+  
+  var count = filtered.size().getInfo();
+  print('Number of images from', startDate.format('YYYY-MM-dd').getInfo(), 'to', endDate.format('YYYY-MM-dd').getInfo(), ':', count);
+  return filtered;
+};
+
+// Check image availability for both periods
+var imagesPeriod1 = checkAvailability(startPeriod1, endPeriod1);
+var imagesPeriod2 = checkAvailability(startPeriod2, endPeriod2);
+
+// Function to calculate monthly means for a given period
+var calculateMonthlyMeans = function(imageCollection, startDate, endDate) {
+  var months = ee.List.sequence(1, 12);
+  return ee.ImageCollection(
+    months.map(function(month) {
+      var monthlyImages = imageCollection
+        .filterDate(startDate, endDate)
+        .filter(ee.Filter.calendarRange(month, month, 'month'));
+      
+      var meanImage = monthlyImages.mean().set('system:time_start', ee.Date.fromYMD(startDate.get('year'), month, 1).millis());
+      
+      return meanImage;
+    })
+  );
+};
+
+// Calculate monthly means for both periods if images are available
+var monthlyMeansPeriod1VV = imagesPeriod1.size().getInfo() > 0 ? calculateMonthlyMeans(imagesPeriod1.select('VV'), startPeriod1, endPeriod1) : ee.ImageCollection([]);
+var monthlyMeansPeriod1VH = imagesPeriod1.size().getInfo() > 0 ? calculateMonthlyMeans(imagesPeriod1.select('VH'), startPeriod1, endPeriod1) : ee.ImageCollection([]);
+var monthlyMeansPeriod2VV = imagesPeriod2.size().getInfo() > 0 ? calculateMonthlyMeans(imagesPeriod2.select('VV'), startPeriod2, endPeriod2) : ee.ImageCollection([]);
+var monthlyMeansPeriod2VH = imagesPeriod2.size().getInfo() > 0 ? calculateMonthlyMeans(imagesPeriod2.select('VH'), startPeriod2, endPeriod2) : ee.ImageCollection([]);
+
+// Calculate the VV/VH ratio for each month in both periods
+var calculateRatio = function(monthlyMeansVV, monthlyMeansVH) {
+  return monthlyMeansVV.map(function(image) {
+    var month = ee.Date(image.get('system:time_start')).get('month');
+    var vhImage = monthlyMeansVH.filter(ee.Filter.calendarRange(month, month, 'month')).first();
+    var ratioImage = vhImage ? image.divide(vhImage).rename('VV/VH Ratio').set('system:time_start', image.get('system:time_start')) : ee.Image().set('system:time_start', image.get('system:time_start'));
+    return ratioImage;
+  });
+};
+
+var ratioMonthlyMeansPeriod1 = calculateRatio(monthlyMeansPeriod1VV, monthlyMeansPeriod1VH);
+var ratioMonthlyMeansPeriod2 = calculateRatio(monthlyMeansPeriod2VV, monthlyMeansPeriod2VH);
+
+// Define a function to compute the rate of change between the two periods
+var computeRateOfChange = function(imageCollection1, imageCollection2) {
+  return ee.ImageCollection(
+    ee.List.sequence(5, 8).map(function(month) {
+      var image1 = imageCollection1.filter(ee.Filter.calendarRange(month, month, 'month')).first();
+      var image2 = imageCollection2.filter(ee.Filter.calendarRange(month, month, 'month')).first();
+      var rateOfChange = image2 && image1 ? image2.subtract(image1).rename('RateOfChange') : ee.Image().rename('RateOfChange');
+      return rateOfChange.set('system:time_start', image2.get('system:time_start'));
+    })
+  );
+};
+
+// Compute the rate of change for VV/VH ratio between the two periods
+var rateOfChangeRatio = computeRateOfChange(ratioMonthlyMeansPeriod1, ratioMonthlyMeansPeriod2);
+
+// Create a phenological time series chart for VV/VH ratio rate of change
+var rateOfChangeChart = ui.Chart.image.series({
+  imageCollection: rateOfChangeRatio,
+  region: geometry,
+  reducer: ee.Reducer.mean(),
+  scale: 30,
+  xProperty: 'system:time_start'
+}).setOptions({
+  title: 'Rate of Change in VV/VH Ratio (May-August)',
+  hAxis: {title: 'Date'},
+  vAxis: {title: 'Rate of Change'},
+  lineWidth: 2,
+  pointSize: 3
+});
+
+// Print the chart
+print(rateOfChangeChart);
+
+// Optional: Add rate of change layer to the map for visualization
+Map.centerObject(geometry);
+Map.addLayer(rateOfChangeRatio.mean(), {min: -1, max: 1, palette: ['blue', 'white', 'red']}, 'Rate of Change');
