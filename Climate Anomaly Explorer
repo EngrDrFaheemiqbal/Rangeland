@@ -1,0 +1,279 @@
+// ----------------------------------------
+// Define Australia boundary
+// ----------------------------------------
+var australia = ee.Geometry.Polygon(
+  [[[112, -44], [112, -10], [154, -10], [154, -44]]], null, false
+);
+
+// Load property boundary (optional)
+var propertyBoundary = ee.FeatureCollection("projects/ee-geosaptialaaco/assets/property");
+var styledBoundary = propertyBoundary.style({
+  color: 'black',
+  fillColor: '00000000',
+  width: 2
+});
+
+// ----------------------------------------
+// Load and preprocess GDDP-CMIP6 dataset
+// ----------------------------------------
+var dataset = ee.ImageCollection('NASA/GDDP-CMIP6')
+  .filter(ee.Filter.eq('model', 'ACCESS-CM2'))
+  .filter(ee.Filter.eq('scenario', 'ssp245'))
+  .filterDate('2025-01-01', '2060-12-31');
+
+// Convert tasmax from Kelvin to Celsius
+var tasmax = dataset.select('tasmax').map(function(img) {
+  return img.subtract(273.15).copyProperties(img, img.propertyNames());
+});
+
+// Convert pr from kg/m²/s to mm/day
+var pr = dataset.select('pr').map(function(img) {
+  return img.multiply(86400).copyProperties(img, img.propertyNames());
+});
+
+// ----------------------------------------
+// Visualization parameters
+// ----------------------------------------
+var tasmaxVis = {
+  min: 20,
+  max: 40,
+  palette: ['blue', 'cyan', 'yellow', 'orange', 'red']
+};
+
+var prVis = {
+  min: 0,
+  max: 10,
+  palette: ['white', 'blue', 'purple']
+};
+
+var tasAnomalyVis = {
+  min: -5,
+  max: 5,
+  palette: ['blue', 'white', 'red']
+};
+
+var prAnomalyVis = {
+  min: -5,
+  max: 5,
+  palette: ['brown', 'white', 'green']
+};
+
+// ----------------------------------------
+// UI Components
+// ----------------------------------------
+var mapPanel = ui.Map();
+mapPanel.setCenter(134.5, -20.5, 5);
+
+var chartPanel = ui.Panel({
+  layout: ui.Panel.Layout.flow('vertical'),
+  style: { width: '100%', height: '300px', backgroundColor: 'white', padding: '8px' }
+});
+
+var legendPanel = ui.Panel({
+  style: { position: 'bottom-left', padding: '8px 15px', backgroundColor: 'rgba(255,255,255,0.8)' }
+});
+
+// Baseline year selectors
+var baselineStartLabel = ui.Label('Baseline Start Year:');
+var baselineStartSlider = ui.Slider({
+  min: 2025,
+  max: 2055,
+  step: 1,
+  value: 2025,
+  style: { width: '260px' }
+});
+
+var baselineEndLabel = ui.Label('Baseline End Year:');
+var baselineEndSlider = ui.Slider({
+  min: 2026,
+  max: 2060,
+  step: 1,
+  value: 2035,
+  style: { width: '260px' }
+});
+
+// Make sure baseline end >= start + 1
+baselineStartSlider.onChange(function(startYear) {
+  var endYear = baselineEndSlider.getValue();
+  if (endYear <= startYear) {
+    baselineEndSlider.setValue(startYear + 1);
+  }
+});
+
+baselineEndSlider.onChange(function(endYear) {
+  var startYear = baselineStartSlider.getValue();
+  if (endYear <= startYear) {
+    baselineStartSlider.setValue(endYear - 1);
+  }
+});
+
+// Target year slider
+var targetYearLabel = ui.Label('Select Target Year:');
+var targetYearSlider = ui.Slider({
+  min: 2025,
+  max: 2060,
+  step: 1,
+  value: 2040,
+  style: { width: '260px' }
+});
+
+// Show anomaly checkbox
+var showAnomalyCheckbox = ui.Checkbox('Show Anomalies', false);
+
+// Run button
+var runButton = ui.Button('Run Visualization', function() {
+  var baselineStart = baselineStartSlider.getValue();
+  var baselineEnd = baselineEndSlider.getValue();
+  var targetYear = targetYearSlider.getValue();
+  var showAnomaly = showAnomalyCheckbox.getValue();
+
+  // Update map with selected settings
+  updateMap(baselineStart, baselineEnd, targetYear, showAnomaly);
+});
+
+// Info label
+var infoLabel = ui.Label('Adjust baseline years, target year, choose to show anomalies or absolute values, then click Run.');
+
+// Control panel on left
+var controlPanel = ui.Panel({
+  widgets: [
+    ui.Label('Climate Anomaly Explorer', { fontWeight: 'bold', fontSize: '20px' }),
+    baselineStartLabel,
+    baselineStartSlider,
+    baselineEndLabel,
+    baselineEndSlider,
+    targetYearLabel,
+    targetYearSlider,
+    showAnomalyCheckbox,
+    runButton,
+    infoLabel,
+    ui.Label('Click on map for monthly charts'),
+    chartPanel
+  ],
+  style: { width: '300px', padding: '10px' }
+});
+
+// Add UI components to root
+ui.root.clear();
+ui.root.add(controlPanel);
+ui.root.add(mapPanel);
+mapPanel.add(legendPanel);
+//mapPanel.addLayer(styledBoundary, {}, 'Property Boundary');
+
+// ----------------------------------------
+// Map update function
+// ----------------------------------------
+function updateMap(baselineStart, baselineEnd, year, showAnomaly) {
+  // Convert to ee.Date
+  var baselineStartDate = ee.Date.fromYMD(baselineStart, 1, 1);
+  var baselineEndDate = ee.Date.fromYMD(baselineEnd, 1, 1);
+  var targetStartDate = ee.Date.fromYMD(year, 1, 1);
+  var targetEndDate = targetStartDate.advance(1, 'year');
+
+  // Calculate baseline means
+  var baselineTas = tasmax.filterDate(baselineStartDate, baselineEndDate).mean();
+  var baselinePr = pr.filterDate(baselineStartDate, baselineEndDate).mean();
+
+  // Calculate target means
+  var tasTarget = tasmax.filterDate(targetStartDate, targetEndDate).mean();
+  var prTarget = pr.filterDate(targetStartDate, targetEndDate).mean();
+
+  // Clear map layers first
+  mapPanel.layers().reset();
+
+  if (showAnomaly) {
+    var tasAnomaly = tasTarget.subtract(baselineTas).clip(australia);
+    var prAnomaly = prTarget.subtract(baselinePr).clip(australia);
+
+    mapPanel.addLayer(tasAnomaly, tasAnomalyVis, 'Tasmax Anomaly (°C) ' + year);
+    mapPanel.addLayer(prAnomaly, prAnomalyVis, 'Precipitation Anomaly (mm/day) ' + year);
+  } else {
+    mapPanel.addLayer(tasTarget.clip(australia), tasmaxVis, 'Tasmax (°C) ' + year);
+    mapPanel.addLayer(prTarget.clip(australia), prVis, 'Precipitation (mm/day) ' + year);
+  }
+
+  // Optional boundary
+  mapPanel.addLayer(styledBoundary, {}, 'Property Boundary');
+}
+
+// ----------------------------------------
+// Monthly chart function
+// ----------------------------------------
+function getMonthlyChart(collection, bandName, point, startYear, endYear) {
+  var dates = ee.List.sequence(startYear, endYear).map(function(y) {
+    return ee.List.sequence(1, 12).map(function(m) {
+      return ee.Date.fromYMD(y, m, 1);
+    });
+  }).flatten();
+
+  var monthlyImages = ee.ImageCollection.fromImages(
+    dates.map(function(date) {
+      date = ee.Date(date);
+      var image = collection.filterDate(date, date.advance(1, 'month')).mean()
+                    .set('system:time_start', date.millis());
+      return image;
+    })
+  );
+
+  return ui.Chart.image.series({
+    imageCollection: monthlyImages,
+    region: point,
+    reducer: ee.Reducer.mean(),
+    scale: 25000
+  }).setOptions({
+    title: bandName + ' Monthly Avg (' + startYear + '–' + endYear + ')',
+    hAxis: { title: 'Date' },
+    vAxis: { title: bandName },
+    lineWidth: 2,
+    pointSize: 4
+  });
+}
+
+// ----------------------------------------
+// Map click to generate charts
+// ----------------------------------------
+mapPanel.onClick(function(coords) {
+  var point = ee.Geometry.Point(coords.lon, coords.lat);
+
+  var baselineStart = baselineStartSlider.getValue();
+  var baselineEnd = baselineEndSlider.getValue();
+  var targetYear = targetYearSlider.getValue();
+
+  chartPanel.clear();
+  var tasChart = getMonthlyChart(tasmax, 'Tasmax (°C)', point, baselineStart, baselineEnd);
+  var prChart = getMonthlyChart(pr, 'Precipitation (mm/day)', point, baselineStart, baselineEnd);
+  chartPanel.add(tasChart);
+  chartPanel.add(prChart);
+});
+
+// ----------------------------------------
+// Legend helper
+// ----------------------------------------
+function createLegend(title, palette, min, max) {
+  var legend = ui.Panel({style: {padding: '8px 0'}});
+  legend.add(ui.Label({value: title, style: {fontWeight: 'bold', fontSize: '13px', margin: '0 0 4px 0'}}));
+  var gradient = ui.Thumbnail({
+    image: ee.Image.pixelLonLat().select(0)
+      .multiply((max - min) / 100.0).add(min)
+      .visualize({min: min, max: max, palette: palette}),
+    params: {bbox: [0, 0, 100, 10], dimensions: '100x10'},
+    style: {stretch: 'horizontal', margin: '0px 0px', maxHeight: '20px'}
+  });
+  var labels = ui.Panel({
+    layout: ui.Panel.Layout.flow('horizontal'),
+    widgets: [
+      ui.Label(min.toString(), {fontSize: '11px'}),
+      ui.Label(max.toString(), {fontSize: '11px', margin: '0 0 0 auto'})
+    ]
+  });
+  legend.add(gradient);
+  legend.add(labels);
+  return legend;
+}
+
+// Add legends
+legendPanel.clear();
+legendPanel.add(createLegend('Tasmax (°C)', tasmaxVis.palette, tasmaxVis.min, tasmaxVis.max));
+legendPanel.add(createLegend('Tasmax Anomaly (°C)', tasAnomalyVis.palette, tasAnomalyVis.min, tasAnomalyVis.max));
+legendPanel.add(createLegend('Precipitation (mm/day)', prVis.palette, prVis.min, prVis.max));
+legendPanel.add(createLegend('Precipitation Anomaly (mm/day)', prAnomalyVis.palette, prAnomalyVis.min, prAnomalyVis.max));
