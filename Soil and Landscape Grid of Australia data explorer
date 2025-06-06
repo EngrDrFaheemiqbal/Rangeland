@@ -1,0 +1,62 @@
+// Load the soil dataset
+var dataset = ee.ImageCollection('CSIRO/SLGA');
+
+// List of attribute codes to process
+var attributeCodes = ['AWC', 'BDW', 'CLY', 'DER', 'ECE', 'NTO', 'PTO', 'SND', 'SLT', 'SOC', 'DES', 'pHc'];
+
+// Define an RGB color palette
+var rgbPalette = ['#ff0000', '#00ff00', '#0000ff']; // Red, Green, Blue
+
+// Load the asset region
+var assetRegion = ee.FeatureCollection('projects/ee-geosaptialaaco/assets/Property_Shp');
+
+// Loop through the attribute codes to compute min and max dynamically and add to map
+attributeCodes.forEach(function(code) {
+  var layer = dataset.filter(ee.Filter.eq('attribute_code', code));
+  
+  // Select the first band of the layer (assuming each attribute has a primary band)
+  var selectedBand = layer.select([0]).median(); // Adjust the band index if necessary
+  
+  // Get the band name dynamically
+  var bandName = selectedBand.bandNames().get(0).getInfo();
+  
+  // Compute min and max values dynamically
+  var stats = selectedBand.reduceRegion({
+    reducer: ee.Reducer.minMax(),
+    geometry: assetRegion.geometry(),
+    scale: 1000, // Adjust scale as per your dataset resolution
+    maxPixels: 1e13
+  });
+  
+  // Extract min and max values using the band name
+  var min = stats.get(bandName + '_min').getInfo();
+  var max = stats.get(bandName + '_max').getInfo();
+  
+  print(code + ' - Min:', min, 'Max:', max); // Log min and max values for each layer
+  
+  // Clip the layer to the asset region
+  var clippedLayer = selectedBand.clip(assetRegion.geometry());
+  
+  // Add the clipped layer to the map
+  Map.addLayer(clippedLayer, {min: min, max: max, palette: rgbPalette}, code + ' (Dynamic Range)');
+});
+
+// Center the map at a specific location
+Map.setCenter(132.495, -21.984, 5);
+
+// Export each layer clipped to the asset region
+attributeCodes.forEach(function(code) {
+  var layer = dataset.filter(ee.Filter.eq('attribute_code', code));
+  var selectedBand = layer.select([0]).median(); // Adjust the band index if necessary
+  
+  // Clip the layer to the asset region
+  var clippedLayer = selectedBand.clip(assetRegion.geometry());
+  
+  Export.image.toDrive({
+    image: clippedLayer,
+    description: code + '_Dynamic_Range',
+    region: assetRegion.geometry(),
+    scale: 30,
+    maxPixels: 1e13
+  });
+});
