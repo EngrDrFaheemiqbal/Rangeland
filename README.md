@@ -2,7 +2,7 @@
 
 ## 🌍 Geomatics Engineer | Remote Sensing & GIS Specialist | Environmental Data Scientist
 
-I am a passionate and highly experienced Geomatics Engineer with 15+ years of expertise in Remote Sensing, GIS, and spatial data analytics. I apply cutting-edge geospatial technologies to solve complex challenges in environmental monitoring, sustainable agriculture, carbon accounting, and land-use planning.
+I am a passionate and highly skilled Geomatics Engineer holding a Ph.D. in Geomatics Engineering, a Master’s degree in Geoinformatics, and a Bachelor’s degree in Agricultural Engineering. With over 15 years of experience specializing in Remote Sensing, GIS, and spatial data analytics, I leverage advanced geospatial technologies—including Google Earth Engine, Python, Java, and web development—to create innovative solutions for complex challenges in environmental monitoring, sustainable agriculture, carbon farming, climate prediction, and land-use planning. My expertise includes developing custom tools for rangeland pasture management, soil mapping, flood modelling, grazing zone management, and land suitability assessments, empowering data-driven decision-making for sustainable resource management.
 
 ---
 
