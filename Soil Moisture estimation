@@ -1,0 +1,143 @@
+// Load the Anthony Paddock asset
+var paddock = ee.FeatureCollection('projects/ee-geosaptialaaco/assets/Anthoy_Padock');
+
+// Define the time range for the analysis
+var time_start = ee.Date('2023-12-01');
+var time_end = ee.Date('2024-04-30');
+var time_dif = time_end.difference(time_start, 'day');
+
+// Filter the Sentinel-1 ImageCollection
+var sen1 = ee.ImageCollection("COPERNICUS/S1_GRD")
+  .filterDate(time_start, time_end)
+  .filterBounds(paddock)
+  .filter(ee.Filter.listContains('transmitterReceiverPolarisation', 'VV'))
+  .filter(ee.Filter.eq('instrumentMode', 'IW'))
+  .select('VV');
+
+// Separate ascending and descending orbits
+var asc = sen1.filter(ee.Filter.eq('orbitProperties_pass', 'ASCENDING'));
+var des = sen1.filter(ee.Filter.eq('orbitProperties_pass', 'DESCENDING'));
+
+// Check if data is available
+print('Number of ascending images:', asc.size());
+print('Number of descending images:', des.size());
+
+var check_asc = asc.first();
+var check_des = des.first();
+print('First image in ascending collection:', check_asc);
+print('First image in descending collection:', check_des);
+
+// Create a list of dates in 10-day intervals
+var list_dates = ee.List.sequence(0, time_dif, 10).map(function(interval) {
+  return ee.Date.fromYMD(2023, 12, 1).advance(interval, 'days');
+});
+
+// Process ascending orbit images
+var asc_10days = ee.ImageCollection(list_dates.map(function(dates) {
+  var start_date = ee.Date(dates);
+  var end_date = start_date.advance(10, 'days');
+  var composite = asc.filterDate(start_date, end_date).mean();
+  var bands = composite.bandNames().size();
+  return composite
+    .set('system:time_start', start_date.millis())
+    .set('system:time_end', end_date.millis())
+    .set('band_number', bands);
+})).filter(ee.Filter.eq('band_number', 1));
+
+// Process descending orbit images
+var des_10days = ee.ImageCollection(list_dates.map(function(dates) {
+  var start_date = ee.Date(dates);
+  var end_date = start_date.advance(10, 'days');
+  var composite = des.filterDate(start_date, end_date).mean();
+  var bands = composite.bandNames().size();
+  return composite
+    .set('system:time_start', start_date.millis())
+    .set('system:time_end', end_date.millis())
+    .set('band_number', bands);
+})).filter(ee.Filter.eq('band_number', 1));
+
+// Compute sigma values for ascending and descending orbits
+var asc_sigma = asc_10days.map(function(img) {
+  var sigma = ee.Image(10).pow(img.divide(10)).rename('sigma');
+  var speckel = sigma.focalMean(30, 'square', 'meters');
+  return speckel.copyProperties(img, img.propertyNames());
+});
+
+var des_sigma = des_10days.map(function(img) {
+  var sigma = ee.Image(10).pow(img.divide(10)).rename('sigma');
+  var speckel = sigma.focalMean(30, 'square', 'meters');
+  return speckel.copyProperties(img, img.propertyNames());
+});
+
+// Use Dynamic World for water and urban masks
+var water_mask = ee.ImageCollection("GOOGLE/DYNAMICWORLD/V1").select('label')
+  .filterDate(time_start, time_end)
+  .filterBounds(paddock).mode().eq(0).not();
+
+var urban_mask = ee.ImageCollection("GOOGLE/DYNAMICWORLD/V1").select('label')
+  .filterDate(time_start, time_end)
+  .filterBounds(paddock).mode().eq(6).not();
+
+// Normalize ascending and descending orbits data
+var asc_min = asc_sigma.min();
+var asc_max = asc_sigma.max();
+
+var asc_sm = asc_sigma.map(function(img) {
+  var index = img.subtract(asc_min).divide(asc_max.subtract(asc_min));
+  var date = img.date().format('YYYY-MM-dd');
+  return index.multiply(water_mask).multiply(urban_mask).rename('sm_asc')
+    .copyProperties(img, ['system:time_start'])
+    .set('date', ee.String(date));
+});
+
+Map.addLayer(asc_sm.filterDate('2023-12-01', '2024-04-30').toBands().clip(paddock), [], 'sm_asc', false);
+
+// Define a smaller area of interest for analysis
+var smaller_geometry = paddock.geometry().buffer(100);  // Adjust buffer size as needed
+
+// Plot a time series of the ascending data with increased pixel limit
+print(
+  ui.Chart.image.series(asc_sm, smaller_geometry, ee.Reducer.mean(), 30, 'system:time_start')
+    .setOptions({
+      title: 'Ascending Pass Soil Moisture Time Series',
+      vAxis: { title: 'Soil Moisture' },
+      hAxis: { title: 'Date' }
+    })
+    .setOptions({ maxPixels: 1e13 })  // Set a higher pixel limit
+);
+
+// Normalize descending orbits data
+var des_min = des_sigma.min();
+var des_max = des_sigma.max();
+
+var des_sm = des_sigma.map(function(img) {
+  var index = img.subtract(des_min).divide(des_max.subtract(des_min));
+  var date = img.date().format('YYYY-MM-dd');
+  return index.multiply(water_mask).multiply(urban_mask).rename('sm_des')
+    .copyProperties(img, ['system:time_start'])
+    .set('date', ee.String(date));
+});
+
+Map.addLayer(des_sm.filterDate('2023-12-01', '2024-04-30').toBands().clip(paddock), [], 'sm_des', false);
+
+// Plot a time series of the descending data with increased pixel limit
+print(
+  ui.Chart.image.series(des_sm, smaller_geometry, ee.Reducer.mean(), 30, 'system:time_start')
+    .setOptions({
+      title: 'Descending Pass Soil Moisture Time Series',
+      vAxis: { title: 'Soil Moisture' },
+      hAxis: { title: 'Date' }
+    })
+    .setOptions({ maxPixels: 1e13 })  // Set a higher pixel limit
+);
+
+// Export the descending orbit data for December 2023 to April 2024
+Export.image.toDrive({
+  image: des_sm.filterDate('2023-12-01', '2024-04-30').toBands().clip(paddock),
+  description: 'des_sm',
+  scale: 30,
+  region: paddock.geometry().bounds(),
+  crs: 'EPSG:4326',
+  folder: 'test',
+  maxPixels: 1e13
+});
