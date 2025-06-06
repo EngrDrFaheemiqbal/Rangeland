@@ -1,0 +1,131 @@
+// Load the polygon from your GEE assets
+var polygon = ee.FeatureCollection('projects/ee-geosaptialaaco/assets/LA_BELLE');
+
+// Define the years of interest
+var years = [1990, 1995, 1999, 2010, 2020, 2024];
+
+// Function to filter Landsat 5 imagery and select the least cloudy image
+function getLeastCloudyLandsat5Image(year) {
+  var startDate = ee.Date.fromYMD(year, 9, 1);
+  var endDate = ee.Date.fromYMD(year, 12, 31);
+  
+  // Load Landsat 5 Collection 2
+  var collection = ee.ImageCollection('LANDSAT/LT05/C02/T1_L2')
+    .filterDate(startDate, endDate)
+    .filterBounds(polygon)
+    .filter(ee.Filter.lt('CLOUD_COVER', 10)); // Filter by cloud cover
+  
+  // Select the least cloudy image
+  return collection.sort('CLOUD_COVER').first();
+}
+
+// Function to filter Sentinel-2 imagery and select the least cloudy image
+function getLeastCloudySentinel2Image(year) {
+  var startDate = ee.Date.fromYMD(year, 9, 1);
+  var endDate = ee.Date.fromYMD(year, 12, 31);
+  
+  // Load Sentinel-2 collection
+  var collection = ee.ImageCollection('COPERNICUS/S2_SR')
+    .filterDate(startDate, endDate)
+    .filterBounds(polygon)
+    .filter(ee.Filter.lt('CLOUDY_PIXEL_PERCENTAGE', 10)); // Filter by cloud cover
+  
+  // Select the least cloudy image
+  return collection.sort('CLOUDY_PIXEL_PERCENTAGE').first();
+}
+
+// Function to calculate NDVI for Landsat 5
+function calculateNDVILandsat5(image) {
+  // Apply scale factors to reflectance bands
+  var opticalBands = image.select('SR_B.').multiply(0.0000275).add(-0.2);
+  var nir = opticalBands.select('SR_B4'); // NIR band
+  var red = opticalBands.select('SR_B3'); // Red band
+  
+  // Calculate NDVI
+  var ndvi = nir.subtract(red).divide(nir.add(red)).rename('NDVI');
+  return image.addBands(ndvi);
+}
+
+// Function to calculate NDVI for Sentinel-2
+function calculateNDVISentinel2(image) {
+  var nir = image.select('B8'); // NIR band
+  var red = image.select('B4'); // Red band
+  
+  // Calculate NDVI
+  var ndvi = nir.subtract(red).divide(nir.add(red)).rename('NDVI');
+  return image.addBands(ndvi);
+}
+
+// Function to extract True Color Composite (TCC) for Landsat 5
+function getTCCLandsat5(image) {
+  // Apply scale factors to reflectance bands
+  var opticalBands = image.select('SR_B.').multiply(0.0000275).add(-0.2);
+  var tcc = opticalBands.select(['SR_B3', 'SR_B2', 'SR_B1']).rename(['Red', 'Green', 'Blue']);
+  return tcc;
+}
+
+// Function to extract True Color Composite (TCC) for Sentinel-2
+function getTCCSentinel2(image) {
+  var tcc = image.select(['B4', 'B3', 'B2']).rename(['Red', 'Green', 'Blue']);
+  return tcc;
+}
+
+// Function to export an image to Google Drive
+function exportImage(image, description, folder, region, scale) {
+  Export.image.toDrive({
+    image: image,
+    description: description,
+    folder: folder,
+    region: region,
+    scale: scale,
+    maxPixels: 1e13,
+    fileFormat: 'GeoTIFF',
+    formatOptions: {
+      cloudOptimized: true
+    }
+  });
+}
+
+// Loop through the years, get the least cloudy image, calculate NDVI, and export
+for (var i = 0; i < years.length; i++) {
+  var year = years[i];
+  var image;
+  var ndviImage;
+  var tccImage;
+  
+  if (year < 2013) {
+    // Use Landsat 5 for years before 2013
+    image = getLeastCloudyLandsat5Image(year);
+    if (image) {
+      ndviImage = calculateNDVILandsat5(image);
+      tccImage = getTCCLandsat5(image);
+    }
+  } else {
+    // Use Sentinel-2 for 2020 and 2024
+    image = getLeastCloudySentinel2Image(year);
+    if (image) {
+      ndviImage = calculateNDVISentinel2(image);
+      tccImage = getTCCSentinel2(image);
+    }
+  }
+  
+  if (image) {
+    // Clip the images to the polygon
+    var clippedTCC = tccImage.clip(polygon);
+    var clippedNDVI = ndviImage.select('NDVI').clip(polygon);
+    
+    // Export the True Color Composite (TCC)
+    exportImage(clippedTCC, 'TCC_' + year, 'GEE_Exports', polygon.geometry(), 30);
+    
+    // Export the NDVI image
+    exportImage(clippedNDVI, 'NDVI_' + year, 'GEE_Exports', polygon.geometry(), 30);
+    
+    // Print the image details
+    print('Image for ' + year, image);
+  } else {
+    print('No image found for ' + year);
+  }
+}
+
+// Center the map on the polygon
+Map.centerObject(polygon, 10);
