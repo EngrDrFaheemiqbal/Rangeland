@@ -1,0 +1,136 @@
+// Load the Evapotranspiration image collection
+var aetCollection = ee.ImageCollection("TERN/AET/CMRSET_LANDSAT_V2_2");
+
+// Load your asset (area of interest)
+var roi = ee.FeatureCollection("projects/ee-geosaptialaaco/assets/EVA_DOWN");
+
+// Function to calculate weekly means
+var calculateWeeklyMeans = function(startDate, endDate) {
+  return ee.ImageCollection(
+    ee.List.sequence(0, ee.Date(endDate).difference(ee.Date(startDate), 'week'))
+      .map(function(weekIndex) {
+        var start = ee.Date(startDate).advance(weekIndex, 'week');
+        var end = start.advance(1, 'week');
+        
+        return aetCollection
+          .filterDate(start, end)
+          .mean()
+          .set('system:time_start', start.millis());
+      })
+  );
+};
+
+// Function to calculate monthly means
+var calculateMonthlyMeans = function(startDate, endDate) {
+  return ee.ImageCollection(
+    ee.List.sequence(0, ee.Date(endDate).difference(ee.Date(startDate), 'month'))
+      .map(function(monthIndex) {
+        var start = ee.Date(startDate).advance(monthIndex, 'month');
+        var end = start.advance(1, 'month');
+        
+        return aetCollection
+          .filterDate(start, end)
+          .mean()
+          .set('system:time_start', start.millis());
+      })
+  );
+};
+
+// Function to calculate yearly means
+var calculateYearlyMeans = function(startDate, endDate) {
+  return ee.ImageCollection(
+    ee.List.sequence(0, ee.Date(endDate).difference(ee.Date(startDate), 'year'))
+      .map(function(yearIndex) {
+        var start = ee.Date(startDate).advance(yearIndex, 'year');
+        var end = start.advance(1, 'year');
+        
+        return aetCollection
+          .filterDate(start, end)
+          .mean()
+          .set('system:time_start', start.millis());
+      })
+  );
+};
+
+// UI Panel
+var panel = ui.Panel({
+  style: {
+    width: '300px'
+  }
+});
+
+// Dropdown for analysis type
+var analysisTypeDropdown = ui.Select({
+  items: ['Week', 'Month', 'Year'],
+  value: 'Week',
+  onChange: updateMap
+});
+panel.add(ui.Label('Select Analysis Type'));
+panel.add(analysisTypeDropdown);
+
+// Date inputs
+var startDateInput = ui.Textbox({
+  placeholder: 'Start Date (YYYY-MM-DD)',
+  value: '2023-01-01',
+  onChange: updateMap
+});
+panel.add(ui.Label('Start Date'));
+panel.add(startDateInput);
+
+var endDateInput = ui.Textbox({
+  placeholder: 'End Date (YYYY-MM-DD)',
+  value: '2024-09-30',
+  onChange: updateMap
+});
+panel.add(ui.Label('End Date'));
+panel.add(endDateInput);
+
+// Add the panel to the map
+ui.root.add(panel);
+
+// Function to update the map based on user input
+function updateMap() {
+  Map.clear(); // Clear the map
+  Map.centerObject(roi, 10); // Center the map
+  
+  var analysisType = analysisTypeDropdown.getValue();
+  var startDate = startDateInput.getValue();
+  var endDate = endDateInput.getValue();
+  
+  // Validate dates
+  if (!startDate || !endDate) {
+    print('Please provide valid start and end dates.');
+    return;
+  }
+  
+  var meansCollection;
+  if (analysisType === 'Week') {
+    meansCollection = calculateWeeklyMeans(startDate, endDate);
+  } else if (analysisType === 'Month') {
+    meansCollection = calculateMonthlyMeans(startDate, endDate);
+  } else if (analysisType === 'Year') {
+    meansCollection = calculateYearlyMeans(startDate, endDate);
+  }
+  
+  // Visualize the first mean layer
+  var firstMean = meansCollection.first();
+  Map.addLayer(firstMean.select('ETa'), {min: 0, max: 10, palette: ['blue', 'yellow', 'red']}, analysisType + ' Mean AET');
+  
+  // Export means as CSV
+  Export.table.toDrive({
+    collection: meansCollection.map(function(image) {
+      var mean = image.reduceRegion({
+        reducer: ee.Reducer.mean(),
+        geometry: roi.geometry(),
+        scale: 30,
+        maxPixels: 1e9
+      });
+      return ee.Feature(null, mean.set(analysisType, ee.Date(image.get('system:time_start')).format('YYYY-MM-dd')));
+    }),
+    description: analysisType + '_AET_Means',
+    fileFormat: 'CSV'
+  });
+}
+
+// Initial map update
+updateMap();
