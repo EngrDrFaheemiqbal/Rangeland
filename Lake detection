@@ -1,0 +1,118 @@
+// Load your asset (Lake_Project) as a region of interest (ROI)
+var lakeProject = ee.FeatureCollection('projects/ee-geosaptialaaco/assets/Lake_Project');
+
+// Get the geometry of the asset
+var yourRegion = lakeProject.geometry();
+
+// Load Landsat datasets
+var landsat75 = ee.ImageCollection('LANDSAT/LM01/C02/T1')
+  .filterDate('1975-01-01', '1975-12-31');
+var landsat76 = ee.ImageCollection('LANDSAT/LM01/C02/T1')
+  .filterDate('1976-01-01', '1976-12-31');
+var landsat24 = ee.ImageCollection('LANDSAT/LC08/C02/T1_L2')
+  .filterDate('2024-01-01', '2024-12-31');
+var landsat25 = ee.ImageCollection('LANDSAT/LC09/C02/T1_L2')
+  .filterDate('2025-01-01', '2025-02-28');
+
+// Function to calculate NDWI for Landsat 1-5 (1975 and 1976)
+function calculateNDWI_Landsat15(image) {
+  var ndwi = image.normalizedDifference(['B4', 'B6']).rename('NDWI'); // Use B4 (Green) and B6 (NIR)
+  return image.addBands(ndwi);
+}
+
+// Function to calculate NDWI for Landsat 8-9 (2024 and 2025)
+function calculateNDWI_Landsat89(image) {
+  var ndwi = image.normalizedDifference(['SR_B3', 'SR_B5']).rename('NDWI'); // Use SR_B3 (Green) and SR_B5 (NIR)
+  return image.addBands(ndwi);
+}
+
+// Function to process each month and generate a monthly NDWI composite
+function processMonth(year, month, collection, ndwiFunction) {
+  var startDate = ee.Date.fromYMD(year, month, 1);
+  var endDate = startDate.advance(1, 'month');
+  var monthlyCollection = collection.filterDate(startDate, endDate);
+  var ndwiCollection = monthlyCollection.map(ndwiFunction);
+  return ndwiCollection.mean().set('system:time_start', startDate.millis());
+}
+
+// Generate monthly NDWI composites for 1975
+var months = ee.List.sequence(1, 12);
+var ndwi1975 = months.map(function(month) {
+  return processMonth(1975, month, landsat75, calculateNDWI_Landsat15);
+});
+
+// Generate monthly NDWI composites for 1976
+var ndwi1976 = months.map(function(month) {
+  return processMonth(1976, month, landsat76, calculateNDWI_Landsat15);
+});
+
+// Generate monthly NDWI composites for 2024
+var ndwi2024 = months.map(function(month) {
+  return processMonth(2024, month, landsat24, calculateNDWI_Landsat89);
+});
+
+// Generate NDWI composites for January and February 2025
+var ndwiJan2025 = processMonth(2025, 1, landsat25, calculateNDWI_Landsat89);
+var ndwiFeb2025 = processMonth(2025, 2, landsat25, calculateNDWI_Landsat89);
+
+// Convert lists to ImageCollections
+var ndwi1975Collection = ee.ImageCollection.fromImages(ndwi1975);
+var ndwi1976Collection = ee.ImageCollection.fromImages(ndwi1976);
+var ndwi2024Collection = ee.ImageCollection.fromImages(ndwi2024);
+
+// Add January and February 2025 to a collection
+var ndwi2025Collection = ee.ImageCollection.fromImages([ndwiJan2025, ndwiFeb2025]);
+
+// Visualize NDWI for January 1975
+var ndwiJan1975 = ee.Image(ndwi1975Collection.toList(1).get(0));
+Map.addLayer(ndwiJan1975.select('NDWI'), {min: -1, max: 1, palette: ['blue', 'white', 'green']}, 'NDWI Jan 1975');
+
+// Center the map on your region of interest
+Map.centerObject(yourRegion, 10);
+
+// Export monthly NDWI composites
+for (var i = 1; i <= 12; i++) {
+  var ndwi1975Month = ee.Image(ndwi1975Collection.toList(12).get(i - 1));
+  Export.image.toDrive({
+    image: ndwi1975Month.select('NDWI'),
+    description: 'NDWI_1975_' + i,
+    scale: 30,
+    region: yourRegion,
+    folder: 'NDWI_1975'
+  });
+
+  var ndwi1976Month = ee.Image(ndwi1976Collection.toList(12).get(i - 1));
+  Export.image.toDrive({
+    image: ndwi1976Month.select('NDWI'),
+    description: 'NDWI_1976_' + i,
+    scale: 30,
+    region: yourRegion,
+    folder: 'NDWI_1976'
+  });
+
+  var ndwi2024Month = ee.Image(ndwi2024Collection.toList(12).get(i - 1));
+  Export.image.toDrive({
+    image: ndwi2024Month.select('NDWI'),
+    description: 'NDWI_2024_' + i,
+    scale: 30,
+    region: yourRegion,
+    folder: 'NDWI_2024'
+  });
+}
+
+// Export January and February 2025
+Export.image.toDrive({
+  image: ndwiJan2025.select('NDWI'),
+  description: 'NDWI_2025_01',
+  scale: 30,
+  region: yourRegion,
+  folder: 'NDWI_2025'
+});
+
+Export.image.toDrive({
+  image: ndwiFeb2025.select('NDWI'),
+  description: 'NDWI_2025_02',
+  scale: 30,
+  region: yourRegion,
+  folder: 'NDWI_2025'
+});
