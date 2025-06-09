@@ -1,0 +1,149 @@
+var roi = ee.FeatureCollection('projects/ee-geosaptialaaco/assets/EVA_DOWN');
+Map.centerObject(roi);
+Map.addLayer(roi, {}, 'ROI');
+
+// Define time periods
+var baselineStart = '2001-01-01';
+var baselineEnd = '2003-12-31';
+var fullStart = '2001-01-01';
+var fullEnd = '2024-12-31';
+
+// Function to scale NDVI from MODIS
+function scaleNDVI(img) {
+  return img.select('NDVI').multiply(0.0001).copyProperties(img, img.propertyNames());
+}
+
+// Load NDVI ImageCollections
+var ndviBaseline = ee.ImageCollection('MODIS/061/MOD13A2')
+  .filterDate(baselineStart, baselineEnd)
+  .map(scaleNDVI);
+
+var ndviAll = ee.ImageCollection('MODIS/061/MOD13A2')
+  .filterDate(fullStart, fullEnd)
+  .map(scaleNDVI);
+
+// Calculate NDVI min and max from baseline period
+var ndviMin = ndviBaseline.min();
+var ndviMax = ndviBaseline.max();
+
+// Calculate VCI (Vegetation Condition Index)
+var vci = ndviAll.map(function(img) {
+  var vciImg = img.expression(
+    '((ndvi - min) / (max - min)) * 100', {
+      ndvi: img,
+      min: ndviMin,
+      max: ndviMax
+    }).rename('VCI');
+  return vciImg.copyProperties(img, img.propertyNames());
+});
+
+// Calculate median VCI over full period
+var vciMedian = vci.median();
+Map.addLayer(vciMedian.clip(roi), {min: 0, max: 100, palette: ['brown', 'yellow', 'green']}, 'VCI Median (2001–2024)', false);
+
+// VCI classification function (returns drought classes 1-7)
+function classifyVCI(img) {
+  return ee.Image(0).rename('Drought')
+    .where(img.lt(10), 1)
+    .where(img.gte(10).and(img.lt(20)), 2)
+    .where(img.gte(20).and(img.lt(30)), 3)
+    .where(img.gte(30).and(img.lt(40)), 4)
+    .where(img.gte(40).and(img.lt(60)), 5)
+    .where(img.gte(60).and(img.lt(80)), 6)
+    .where(img.gte(80), 7)
+    .copyProperties(img, img.propertyNames());
+}
+
+// Apply classification to VCI collection
+var droughtClassified = vci.map(classifyVCI);
+
+// Calculate mode drought class for full period
+var droughtMode = droughtClassified.mode();
+var droughtPalette = ['000000', '6e260e', '9b111e', 'f97306', 'ffff00', '90ee90', '006400'];
+
+Map.addLayer(droughtMode.clip(roi), {
+  min: 1, max: 7,
+  palette: droughtPalette
+}, 'VCI Mode (2001–2024)', false);
+
+// Export the drought mode map to Google Drive
+Export.image.toDrive({
+  image: droughtMode.clip(roi),
+  description: 'VCI_Mode_2001_2024',
+  folder: 'drought',
+  region: roi.geometry(),
+  scale: 1000,
+  crs: 'EPSG:4326',
+  maxPixels: 1e13
+});
+
+// Calculate pixel area in km²
+var pixelArea = ee.Image.pixelArea().divide(1e6); // km²
+
+// Combine pixel area with drought class band
+var droughtAreaImg = pixelArea.addBands(droughtMode.rename('class'));
+
+// Use reduceRegion with grouped reducer to sum area by drought class
+var stats = droughtAreaImg.reduceRegion({
+  reducer: ee.Reducer.sum().group({
+    groupField: 1,
+    groupName: 'class'
+  }),
+  geometry: roi.geometry(),
+  scale: 1000,
+  maxPixels: 1e13
+});
+
+// Drought class labels for legend
+var classLabels = {
+  1: 'Extreme (<10)',
+  2: 'Severe (10–20)',
+  3: 'Moderate (20–30)',
+  4: 'Light (30–40)',
+  5: 'No Drought 1 (40–60)',
+  6: 'No Drought 2 (60–80)',
+  7: 'No Drought 3 (>80)'
+};
+
+// Add Legend Panel
+var legend = ui.Panel({
+  style: {
+    position: 'bottom-left',
+    padding: '8px 15px'
+  }
+});
+
+var legendTitle = ui.Label({
+  value: 'Drought Classes',
+  style: {fontWeight: 'bold', fontSize: '16px', margin: '0 0 6px 0'}
+});
+legend.add(legendTitle);
+
+var makeRow = function(color, name) {
+  var colorBox = ui.Label({
+    style: {
+      backgroundColor: '#' + color,
+      padding: '8px',
+      margin: '0 8px 0 0',
+      width: '24px',
+      height: '24px'
+    }
+  });
+
+  var description = ui.Label({
+    value: name,
+    style: {fontSize: '14px', margin: '0'}
+  });
+
+  return ui.Panel({
+    widgets: [colorBox, description],
+    layout: ui.Panel.Layout.Flow('horizontal')
+  });
+};
+
+// Add legend items
+for (var i = 0; i < droughtPalette.length; i++) {
+  legend.add(makeRow(droughtPalette[i], classLabels[i + 1]));
+}
+
+Map.add(legend);
