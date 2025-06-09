@@ -1,0 +1,83 @@
+// ──────────────────────────────────────────────────────────
+// 1. Load ROI (Anthony area)
+// ──────────────────────────────────────────────────────────
+var roi = ee.FeatureCollection('projects/ee-geosaptialaaco/assets/Anthony').geometry();
+Map.centerObject(roi, 8);
+
+// ──────────────────────────────────────────────────────────
+// 2. Load SLA layer & apply mask
+// ──────────────────────────────────────────────────────────
+var SLA = ee.Image('projects/sat-io/open-datasets/GLOBAL-LEAF-TRAITS/SLA_1km_v3')
+  .select(0).rename('SLA')
+  .updateMask(ee.Image('projects/sat-io/open-datasets/GLOBAL-LEAF-TRAITS/SLA_1km_v3').gt(0));
+
+// ──────────────────────────────────────────────────────────
+// 3. Visualization
+// ──────────────────────────────────────────────────────────
+var visSLA = {
+  min: 7, max: 22,
+  palette: [
+    'ffffd9','edf8b1','c7e9b4','7fcdbb',
+    '41b6c4','1d91c0','225ea8','253494','081d58'
+  ]
+};
+
+Map.addLayer(SLA.clip(roi), visSLA, 'SLA (mm²/g)', true);
+
+// ──────────────────────────────────────────────────────────
+// 4. Add Legend Panel
+// ──────────────────────────────────────────────────────────
+var legend = ui.Panel({
+  style: {
+    position: 'bottom-left',
+    padding: '8px 15px'
+  }
+});
+
+// Legend title
+var legendTitle = ui.Label({
+  value: 'SLA (mm²/g)',
+  style: {
+    fontWeight: 'bold',
+    fontSize: '14px',
+    margin: '0 0 4px 0',
+    padding: '0'
+  }
+});
+legend.add(legendTitle);
+
+// Legend color bar
+var makeColorBar = function(palette) {
+  var colorBar = ui.Thumbnail({
+    image: ee.Image.pixelLonLat().select(0),
+    params: {
+      bbox: [0, 0, 1, 0.1],
+      dimensions: '150x10',
+      format: 'png',
+      min: 0,
+      max: 1,
+      palette: palette,
+    },
+    style: {
+      stretch: 'horizontal',
+      margin: '0px 8px',
+      maxHeight: '24px',
+    }
+  });
+  return colorBar;
+};
+
+legend.add(makeColorBar(visSLA.palette));
+
+// Legend min & max labels
+var legendLabels = ui.Panel({
+  widgets: [
+    ui.Label(visSLA.min.toString(), {margin: '4px 8px'}),
+    ui.Label(visSLA.max.toString(), {margin: '4px 8px', textAlign: 'right', stretch: 'horizontal'})
+  ],
+  layout: ui.Panel.Layout.flow('horizontal')
+});
+legend.add(legendLabels);
+
+// Add legend to the map
+Map.add(legend);
