@@ -1,0 +1,140 @@
+// Load the asset region
+var aoi = ee.FeatureCollection('projects/ee-geosaptialaaco/assets/Property_Shp');
+
+// List of attribute codes and corresponding depth bands
+var bandMapping = {
+  'AWC': 'AWC_000_005_EV',
+  'BDW': 'BDW_000_005_EV',
+  'CLY': 'CLY_000_005_EV',
+  'DER': 'DER_000_999_EV',
+  'ECE': 'ECE_000_005_EV',
+  'NTO': 'NTO_000_005_EV',
+  'PTO': 'PTO_000_005_EV',
+  'SND': 'SND_000_005_EV',
+  'SLT': 'SLT_000_005_EV',
+  'SOC': 'SOC_000_005_EV',
+  'DES': 'DES_000_200_EV',
+  'pHc': 'pHc_000_005_EV'
+};
+
+// Classification thresholds
+var classificationRules = {
+  'AWC': function(v) {
+    return ee.Image(v.lt(15).multiply(3).add(v.gte(15).and(v.lt(17)).multiply(2)).add(v.gte(17).multiply(1)));
+  },
+  'BDW': function(v) {
+    return ee.Image(v.lt(1.35).multiply(1).add(v.gte(1.35).and(v.lt(1.45)).multiply(2)).add(v.gte(1.45).multiply(3)));
+  },
+  'CLY': function(v) {
+    return ee.Image(v.lt(25).multiply(3).add(v.gte(25).and(v.lt(40)).multiply(2)).add(v.gte(40).multiply(1)));
+  },
+  'DER': function(v) {
+    return ee.Image(v.lt(10).multiply(3).add(v.gte(10).and(v.lt(40)).multiply(2)).add(v.gte(40).multiply(1)));
+  },
+  'ECE': function(v) {
+    return ee.Image(v.lt(4).multiply(1).add(v.gte(4).and(v.lte(8)).multiply(2)).add(v.gt(8).multiply(3)));
+  },
+  'NTO': function(v) {
+    return ee.Image(v.lt(0.05).multiply(3).add(v.gte(0.05).and(v.lt(0.1)).multiply(2)).add(v.gte(0.1).multiply(1)));
+  },
+  'PTO': function(v) {
+    return ee.Image(v.lt(0.02).multiply(3).add(v.gte(0.02).and(v.lt(0.035)).multiply(2)).add(v.gte(0.035).multiply(1)));
+  },
+  'SND': function(v) {
+    return ee.Image(v.lt(50).multiply(3).add(v.gte(50).and(v.lt(70)).multiply(2)).add(v.gte(70).multiply(1)));
+  },
+  'SLT': function(v) {
+    return ee.Image(v.lt(8).multiply(3).add(v.gte(8).and(v.lt(12)).multiply(2)).add(v.gte(12).multiply(1)));
+  },
+  'SOC': function(v) {
+    return ee.Image(v.lt(1).multiply(3).add(v.gte(1).and(v.lt(2)).multiply(2)).add(v.gte(2).multiply(1)));
+  },
+  'DES': function(v) {
+    return ee.Image(v.lt(0.8).multiply(3).add(v.gte(0.8).and(v.lt(1.2)).multiply(2)).add(v.gte(1.2).multiply(1)));
+  },
+  'pHc': function(v) {
+    return ee.Image(v.lt(5.5).multiply(3).add(v.gte(5.5).and(v.lt(6.8)).multiply(1)).add(v.gte(6.8).multiply(2)));
+  }
+};
+
+// Adjusted weights (totaling 1.00 with new soil dataset at 15%)
+var weights = {
+   'AWC': 0.2118,
+  'BDW': 0.1198,
+  'CLY': 0.0514,
+  'DER': 0.0513,
+  'ECE': 0.0506,
+  'NTO': 0.0484,
+  'PTO': 0.0484,
+  'SND': 0.0523,
+  'SLT': 0.0523,
+  'SOC': 0.0496,
+  'DES': 0.0523,
+  'pHc': 0.0513,
+  'slope': 0.0514,
+  'rain': 0.0545,
+  'soil_data': 0.0545// new soil classification data
+};
+
+// Load the base dataset
+var baseCollection = ee.ImageCollection('CSIRO/SLGA');
+
+// Process soil attributes
+var classifiedImages = Object.keys(bandMapping).map(function(key) {
+  var image = baseCollection
+    .filter(ee.Filter.eq('attribute_code', key))
+    .select(bandMapping[key])
+    .median();
+
+  var classified = classificationRules[key](image);
+  var weighted = classified.multiply(weights[key]);
+
+  return weighted.rename(key + '_weighted');
+});
+
+// === Slope classification ===
+var slope = ee.Terrain.slope(ee.Image('USGS/SRTMGL1_003'));
+var slope_class = slope.lt(2).multiply(3)
+  .add(slope.gte(2).and(slope.lte(3)).multiply(2))
+  .add(slope.gt(3).multiply(1));
+classifiedImages.push(slope_class.multiply(weights['slope']).rename('slope_weighted'));
+
+// === Rainfall classification ===
+var rainfall = ee.ImageCollection("UCSB-CHG/CHIRPS/DAILY")
+  .filterDate('2020-01-01', '2024-12-31')
+  .select('precipitation')
+  .mean();
+var rain_class = rainfall.lt(300).multiply(3)
+  .add(rainfall.gte(300).and(rainfall.lt(450)).multiply(2))
+  .add(rainfall.gte(450).and(rainfall.lte(650)).multiply(1))
+  .add(rainfall.gt(650).multiply(2));
+classifiedImages.push(rain_class.multiply(weights['rain']).rename('rain_weighted'));
+
+// === Custom Soil Classification Layer ===
+var soilData = ee.Image('projects/ee-geosaptialaaco/assets/Soil_Data');
+var soil_class = soilData.where(soilData.eq(1), 1)
+  .where(soilData.eq(2), 2)
+  .where(soilData.eq(3), 3);  // Already classified
+classifiedImages.push(soil_class.multiply(weights['soil_data']).rename('soilData_weighted'));
+
+// === Combine all ===
+var combined = ee.Image.cat(classifiedImages);
+var suitabilityIndex = combined.reduce(ee.Reducer.sum()).rename('Suitability_Index');
+
+// === Visualize ===
+Map.centerObject(aoi, 6);
+Map.addLayer(suitabilityIndex.clip(aoi), {
+  min: 0,
+  max: 3,
+  palette: ['green', 'yellow', 'orange', 'red']
+}, 'Final Suitability Index');
+
+// === Export ===
+Export.image.toDrive({
+  image: suitabilityIndex.clip(aoi),
+  description: 'SuitabilityIndex_With_Soil_Slope_Rain',
+  scale: 30,
+  region: aoi.geometry(),
+  fileFormat: 'GeoTIFF',
+  maxPixels: 1e13
+});
